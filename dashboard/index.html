@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Launch Radar: pre-token protocols ranked by implied launch value</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="mark"></span>LAUNCH&nbsp;RADAR</div>
+  <div class="topmeta" id="topmeta"></div>
+</header>
+<main>
+  <section class="hero">
+    <h1>Which pre-token protocol is worth farming next?</h1>
+    <p class="lede">Every protocol in the snapshot that records no token yet, ranked by what a launch
+    would be worth if its record stayed as it is. The price is not a guess and not a list of names:
+    it is what the market already pays for the tokenized protocols in the same line of work, applied
+    to this one's TVL, growth, runway and reach. Each row carries the farm plan that goes with it:
+    what to do, what it costs, and how long it takes.</p>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <nav class="tabs" id="tabs">
+    <button type="button" data-view="board" class="on">The board</button>
+    <button type="button" data-view="live">Already trading</button>
+    <button type="button" data-view="model">The model</button>
+  </nav>
+
+  <section id="boardview">
+    <div class="controls">
+      <label class="grow">Search
+        <input id="q" type="search" placeholder="Protocol, category or slug" autocomplete="off">
+      </label>
+      <label>Category
+        <select id="cat"></select>
+      </label>
+      <label>Chain
+        <select id="chain"></select>
+      </label>
+      <label>Show
+        <select id="scope">
+          <option value="all">All ranked protocols</option>
+          <option value="watch">Watchlist only</option>
+          <option value="early">Early catches (off-watchlist)</option>
+        </select>
+      </label>
+      <label>Sort by
+        <select id="sort">
+          <option value="rank">Implied value (rank)</option>
+          <option value="tvl">TVL</option>
+          <option value="growth">7-day growth</option>
+          <option value="age">Longest token-free runway</option>
+          <option value="multiple">Category multiple</option>
+          <option value="cheap">Cheapest plan first</option>
+        </select>
+      </label>
+    </div>
+    <p class="count" id="count"></p>
+    <div class="tablescroll">
+      <table class="board">
+        <thead>
+          <tr>
+            <th class="num sortable" data-sort="rank">#</th>
+            <th class="sortable" data-sort="name">Protocol</th>
+            <th>Category</th>
+            <th>Chains</th>
+            <th class="num sortable" data-sort="tvl">TVL</th>
+            <th class="num sortable" data-sort="growth">7d</th>
+            <th class="num sortable" data-sort="age">Runway</th>
+            <th class="num sortable" data-sort="multiple">Mult.</th>
+            <th class="num sortable" data-sort="rank">Implied value</th>
+            <th>Farm plan</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <p class="fineprint">A star marks a watchlist protocol: at or above the snapshot's floor, recording
+    no token, and not a wrapped, staked or bridged product of one that trades. Unstarred rows are the
+    radar's own catches beyond that floor. "Records no token" is DefiLlama's record, not proof a token
+    does not exist; an implied value is this board's claim about a launch that may never happen.</p>
+  </section>
+
+  <section id="liveview" hidden>
+    <p class="lede small">These protocols already trade, so the board does not rank them: it shows the
+    market's own value for them. They are the comparables the pre-token prices are made from: a
+    category's multiple is the median of these ratios, shrunk toward the global median when the peer
+    count is thin.</p>
+    <div class="tablescroll">
+      <table class="board">
+        <thead>
+          <tr><th>Protocol</th><th>Category</th><th>Chains</th><th class="num">TVL</th>
+          <th class="num">Market cap</th><th class="num">7d</th><th class="num">Mcap / TVL</th></tr>
+        </thead>
+        <tbody id="liverows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="modelview" hidden>
+    <h2>How every price on the board is made</h2>
+    <p>One function prices every row. Nothing is priced by name, and no figure comes from outside the
+    snapshot:</p>
+    <div class="formula">implied value = TVL &times; category multiple &times; growth &times; runway &times; breadth</div>
+    <ul class="model-list">
+      <li><strong>Category multiple.</strong> For each DefiLlama category, take the tokenized protocols
+      in it and their market-cap-to-TVL ratios; the multiple is the median ratio, shrunk toward the
+      global median by the peer count (shrink 6) and clamped between 0.03 and 1.20. A category with
+      fewer than three peers prices at the global median. The table below is the actual pricing table
+      this board ran on.</li>
+      <li><strong>Growth.</strong> 1 + clamp(7-day TVL change, -60%, +120%) &times; 0.5: a protocol
+      adding TVL fast is worth more at launch than one bleeding it, and one week's move is capped so
+      it cannot dominate the price.</li>
+      <li><strong>Runway.</strong> 0.78 + 0.44 &times; the square root of its token-free age over four
+      years: the longer a protocol has run with no token, the more usage a launch would capitalise.
+      A protocol with no tracking date is priced at the snapshot's median age.</li>
+      <li><strong>Breadth.</strong> +2.5% per chain past the first, up to eight: distribution is
+      worth a premium, and it is the smallest factor on purpose.</li>
+      <li><strong>Who gets ranked.</strong> Every watchlist protocol, plus every other protocol that
+      records no token. Above the watchlist floor a candidate must also pass the watchlist's own
+      product screen, so a wrapped, staked or bridged product of a token that already trades (the
+      snapshot's largest token-free records are exactly those: the wrapped bitcoins and exchange
+      staking wrappers) is never ranked as a launch still to come. Below the floor the net is cast
+      widest, because finding the early ones is the radar's job.</li>
+    </ul>
+    <div id="cattable"></div>
+    <p class="fineprint">What the board does not do: predict that a token will be issued, or when. A
+    protocol can run for years with no token and never issue one. The farm plans assume the reader
+    wants the position anyway if the protocol's own rewards make it worthwhile, and every plan says
+    never to pay anyone to "claim" an airdrop.</p>
+  </section>
+
+  <section id="detail" hidden></section>
+
+  <footer>
+    <span id="footmeta"></span>
+    <span>Launch Radar: a program reads one sealed snapshot and writes this page; no network, no tracking.</span>
+  </footer>
+</main>
+<script src="../data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
