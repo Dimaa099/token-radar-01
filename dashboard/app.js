@@ -197,9 +197,9 @@
       return;
     }
     var price = categoryPrice(row.category);
-    var medianNote = price && price.median_ratio != null
+    var medianNote = price && price.peers >= 3 && price.median_ratio != null
       ? 'median ' + price.median_ratio.toFixed(2) + '× across ' + price.peers + ' tokenized peers, shrunk toward the global ' + DATA.global_multiple.toFixed(2) + '×'
-      : 'no tokenized peers in this category: priced at the global median ' + DATA.global_multiple.toFixed(2) + '×';
+      : 'fewer than three tokenized peers in this category: priced at the global median ' + DATA.global_multiple.toFixed(2) + '×';
     var tiles = [
       { v: money(row.tvl_usd), l: 'TVL in the snapshot' },
       { v: money(row.implied_value_usd), l: 'implied launch value (rank #' + row.rank + ')' },
@@ -258,6 +258,7 @@
   // ------------------------------------------------------------ views and routing
   var views = { board: $('boardview'), live: $('liveview'), model: $('modelview'), detail: $('detail') };
   function show(view, slug) {
+    document.querySelector('.hero').style.display = view === 'detail' ? 'none' : '';
     views.board.hidden = view !== 'board';
     views.live.hidden = view !== 'live';
     views.model.hidden = view !== 'model';
