@@ -14,10 +14,11 @@
 //                count (shrink K = 6) and clamped to [0.03, 1.20]. A category with fewer than 3
 //                peers cannot carry its own median; comps-3 then priced it at the bare global
 //                median, so the board's largest rows rested on no local evidence at all.
-//                comps-4 prices a thin category from the 8 tokenized protocols nearest the
+//                comps-4 prices a thin category from the 12 tokenized protocols nearest the
 //                protocol in TVL, whatever they do — the market's price for a protocol's size
 //                is real evidence about a protocol of that size — blended half-and-half with
-//                the global median in log space.
+//                the global median in log space. (The pool was 8 when comps-4 shipped;
+//                comps-5 widened it to 12 — see the validation note below.)
 //   growth     = 1 + clamp(change_7d, -60, 120) / 100 x 0.5
 //   runway     = 0.78 + 0.44 x sqrt(min(age_days, 1460) / 1460): the longer a protocol has run
 //                with no token, the more usage a launch would capitalise (age unknown: the
@@ -38,6 +39,18 @@
 // the 24 seeded splits comps-3 was selected on AND on a second set of 24 splits it was never
 // selected against, without giving up rank correlation. Together they did (held-out mean
 // median |log10 error| 0.568/0.564 against comps-3's 0.582/0.588, split wins 16 and 19 of 24).
+// comps-5 changes exactly one thing: the thin-category neighbour pool widens from 8 to 12.
+// The change was fixed as a candidate before it was scored and was scored the comps-4 way,
+// harder (tools/evaluate3.mjs): it had to beat comps-4's mean held-out error on the splits
+// comps-4 was selected on AND on the confirmation set AND on a third set of 24 splits no model
+// had ever been selected against, winning at least 14, 13 and 13 of the splits without giving
+// up more than 0.01 of rank correlation on any set. It did (held-out mean median |log10 error|
+// 0.558/0.550/0.578 against comps-4's 0.568/0.564/0.587; split wins 15, 16 and 14 of 24). The
+// same test refused the trimmed-log estimator on top of comps-4, a steeper size slope, a
+// smaller shrink, a stronger neighbour blend, and dropping the snapshot's zero-cap protocols
+// from the peer set — a recorded cap of zero turns out to be market evidence, not a dead
+// record: removing those peers lost on every set, so they stay.
+//
 // The dashboard also keeps the whole field honest: every one of the snapshot's pre-token
 // protocols is accounted for — ranked, or set aside with the reason printed — and every farm
 // plan carries a verdict netted to the dollar (see farmVerdict below).
@@ -72,7 +85,7 @@ export interface Snapshot {
 }
 
 /** The model's version label: the dashboard names it. */
-export const MODEL_VERSION = 'comps-4';
+export const MODEL_VERSION = 'comps-5';
 
 /** How hard a thin category's median is pulled toward the global median. */
 export const SHRINK_K = 6;
@@ -169,7 +182,11 @@ export const PARAMS: ModelParams = {
   // tokenized protocols by TVL, blended with the global median. Together: held-out mean median
   // |log10 error| 0.568/0.564 against comps-3's 0.582/0.588; split wins 16/24 and 19/24.
   size_ref: 'category',
-  thin_neighbors: 8,
+  // comps-5 widens the neighbour pool from 8 to 12, scored the same way and harder
+  // (tools/evaluate3.mjs): it beat comps-4's mean held-out error on the selection set, the
+  // confirmation set AND a third set of splits never used for selection before (0.558/0.550/
+  // 0.578 against 0.568/0.564/0.587; split wins 15/16/14 of 24), rank correlation intact.
+  thin_neighbors: 12,
   thin_neighbor_blend: 0.5,
   estimator: 'median',
   exclude_zero_cap_peers: false,

@@ -134,10 +134,14 @@
       A category with fewer than three tokenized peers cannot carry its own median. An earlier
       version of this model priced such rows at the bare global median, which left the board's
       largest rows — the thin-category giants — resting on no local evidence at all. Now a thin
-      row is priced from the eight tokenized protocols nearest it in TVL, whatever they do: the
+      row is priced from the twelve tokenized protocols nearest it in TVL, whatever they do: the
       market's price for a protocol's <em>size</em> is real evidence about a protocol of that
       size. Their median is blended half-and-half with the global median in log space, the row
-      is marked <em>thin</em>, and its detail view names the neighbours' median it used. Read a
+      is marked <em>thin</em>, and its detail view names the neighbours' median it used. The pool
+      was eight in the previous version of this model; widening it to twelve was put to the same
+      out-of-sample test before it shipped — three sets of 24 seeded splits, the third of them
+      never used to select anything before — and beat the eight-neighbour model on every set.
+      Read a
       thin row as a skip-grade price — a reason to look closer, not a number to size a farm by.</li>
       <li><strong>Every plan is netted to a verdict.</strong> A plan's capital is not a cost — it
       sits in the position and returns on unwind — so each plan is netted to what it actually

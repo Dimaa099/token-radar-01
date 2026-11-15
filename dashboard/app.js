@@ -289,7 +289,7 @@
     if (price && price.peers >= MODEL.min_peers && price.median_ratio != null) {
       medianNote = 'median ' + price.median_ratio.toFixed(2) + '× across ' + price.peers + ' tokenized peers, shrunk toward the global ' + DATA.global_multiple.toFixed(2) + '×';
     } else if (row.neighbor_ratio != null) {
-      medianNote = 'its category is too thin to carry a median, so this blends the 8 tokenized protocols nearest it in TVL (their median ' +
+      medianNote = 'its category is too thin to carry a median, so this blends the 12 tokenized protocols nearest it in TVL (their median ' +
         row.neighbor_ratio.toFixed(2) + '×) with the global median ' + DATA.global_multiple.toFixed(2) + '×, half and half in log space';
     } else {
       medianNote = 'no tokenized peers near it in size either: priced at the global median ' + DATA.global_multiple.toFixed(2) + '×';
