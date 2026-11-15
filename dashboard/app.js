@@ -11,6 +11,53 @@
     return;
   }
 
+  // ------------------------------------------------------------ the model, in the page
+  // The pricing function itself, the same formulas lib/model.ts prices the board with, run
+  // here on the figures data.js carries: every input below is a number printed somewhere on
+  // this page (the snapshot's own figures, the pricing table, the row's record), and the
+  // pricing table was rounded before it priced anything, so this recomputation lands on the
+  // board's number to the dollar. A detail view further down renders its price line by line
+  // from this function, not from a stored answer: the code behind the screen is this code.
+  var MODEL = {
+    shrink_k: 6, min_peers: 3, multiple_floor: 0.03, multiple_cap: 1.2,
+    growth_floor: -60, growth_cap: 120, growth_weight: 0.5,
+    runway_floor: 0.78, runway_range: 0.44, runway_days: 1460,
+    chain_step: 0.025, extra_chains: 8, size_beta: 0.25, thin_neighbor_blend: 0.5,
+  };
+  function clampN(n, lo, hi) { return Math.min(hi, Math.max(lo, n)); }
+  function round4(n) { return Math.round(n * 1e4) / 1e4; }
+  function categoryPrice(cat) {
+    for (var i = 0; i < DATA.categories.length; i++) if (DATA.categories[i].category === cat) return DATA.categories[i];
+    return null;
+  }
+  /** Recompute one row's price from the snapshot's figures: its multiple, its four factors, its value. */
+  function priceFactors(row) {
+    var price = categoryPrice(row.category);
+    var peers = price ? price.peers : 0;
+    var multiple;
+    if (price && peers >= MODEL.min_peers) {
+      multiple = round4(clampN(
+        (peers * price.median_ratio + MODEL.shrink_k * DATA.global_multiple) / (peers + MODEL.shrink_k),
+        MODEL.multiple_floor, MODEL.multiple_cap));
+    } else if (row.neighbor_ratio != null) {
+      var w = MODEL.thin_neighbor_blend;
+      multiple = round4(Math.exp(w * Math.log(row.neighbor_ratio) + (1 - w) * Math.log(DATA.global_multiple)));
+    } else {
+      multiple = DATA.global_multiple;
+    }
+    var growthPct = clampN(row.change_7d == null ? 0 : row.change_7d, MODEL.growth_floor, MODEL.growth_cap);
+    var growth = 1 + (growthPct / 100) * MODEL.growth_weight;
+    var age = row.age_days == null ? DATA.median_age_days : row.age_days;
+    var runway = MODEL.runway_floor + MODEL.runway_range * Math.sqrt(clampN(age, 0, MODEL.runway_days) / MODEL.runway_days);
+    var breadth = 1 + MODEL.chain_step * Math.min(Math.max(row.chains.length - 1, 0), MODEL.extra_chains);
+    var size = Math.pow(row.tvl_usd / row.size_ref_tvl, -MODEL.size_beta);
+    return {
+      multiple: multiple, peers: peers, growth: growth, runway: runway, breadth: breadth, size: size,
+      implied: Math.max(1, Math.round(row.tvl_usd * multiple * growth * runway * breadth * size)),
+    };
+  }
+  function verdictClass(v) { return v === 'Farm' ? 'v-farm' : v === 'Farm small' ? 'v-small' : 'v-watch'; }
+
   // ------------------------------------------------------------ small helpers
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -135,7 +182,7 @@
           '<td class="num">' + ageText(r.age_days) + '</td>' +
           '<td class="num">' + r.category_multiple.toFixed(2) + '×' + (r.peer_count < 3 ? ' <span class="thin">thin</span>' : '') + '</td>' +
           '<td class="num"><span class="value">' + money(r.implied_value_usd) + '</span><span class="bar"><i style="width:' + w + '%"></i></span></td>' +
-          '<td class="plan"><b>' + money(r.plan_capital_usd) + '</b> in · ~' + money(r.plan_gas_usd) + ' gas · ' + r.plan_weeks + ' wk</td>' +
+          '<td class="plan"><b>' + money(r.plan_capital_usd) + '</b> in · ~' + money(r.plan_gas_usd) + ' gas · ' + r.plan_weeks + ' wk <span class="verdict ' + verdictClass(r.verdict) + '">' + esc(r.verdict) + '</span></td>' +
           '</tr>'
         );
       })
@@ -197,14 +244,31 @@
         'that is why every row prints its workings and its peer count, and why thin rows are marked. The radar ranks where a launch ' +
         'would be worth most if the record held; it does not promise the record will hold.</p>';
     }
+    // The audit register: every pre-token protocol in the snapshot, ranked or set aside with
+    // its reason — the coverage claim, checkable row by row instead of asserted in a headline.
+    var a = DATA.audit;
+    if (a) {
+      var reasonCounts = {};
+      a.set_aside.forEach(function (s) { reasonCounts[s.reason] = (reasonCounts[s.reason] || 0) + 1; });
+      var reasonRows = Object.keys(reasonCounts).sort(function (x, y) { return reasonCounts[y] - reasonCounts[x]; })
+        .map(function (r) { return '<tr><td>' + esc(r) + '</td><td class="num">' + reasonCounts[r] + '</td></tr>'; }).join('');
+      $('auditbox').innerHTML =
+        '<div class="stats" style="grid-template-columns:repeat(3,1fr)">' +
+        '<div class="stat hot"><b>' + a.pre_token + '</b><span>pre-token protocols in the snapshot, every one accounted for</span></div>' +
+        '<div class="stat"><b>' + a.ranked + '</b><span>ranked on the board</span></div>' +
+        '<div class="stat"><b>' + a.set_aside.length + '</b><span>set aside, each with its reason in the register below</span></div>' +
+        '</div>' +
+        '<table class="mini"><thead><tr><th>Why a protocol is set aside</th><th class="num">Count</th></tr></thead><tbody>' + reasonRows + '</tbody></table>';
+      $('auditregister').innerHTML =
+        '<table class="mini"><thead><tr><th>Set aside</th><th>Category</th><th class="num">TVL</th><th>Reason</th></tr></thead><tbody>' +
+        a.set_aside.map(function (s) {
+          return '<tr><td>' + esc(s.name) + '<span class="slug">' + esc(s.slug) + '</span></td><td class="cat">' + esc(s.category || 'Uncategorized') +
+            '</td><td class="num">' + money(s.tvl_usd) + '</td><td>' + esc(s.reason) + '</td></tr>';
+        }).join('') + '</tbody></table>';
+    }
   }
 
   // ------------------------------------------------------------ detail view
-  function categoryPrice(cat) {
-    for (var i = 0; i < DATA.categories.length; i++) if (DATA.categories[i].category === cat) return DATA.categories[i];
-    return null;
-  }
-
   function renderDetail(slug) {
     var row = null;
     for (var i = 0; i < DATA.rows.length; i++) if (DATA.rows[i].slug === slug) row = DATA.rows[i];
@@ -215,38 +279,68 @@
       return;
     }
     var price = categoryPrice(row.category);
-    var medianNote = price && price.peers >= 3 && price.median_ratio != null
-      ? 'median ' + price.median_ratio.toFixed(2) + '× across ' + price.peers + ' tokenized peers, shrunk toward the global ' + DATA.global_multiple.toFixed(2) + '×'
-      : 'fewer than three tokenized peers in this category: priced at the global median ' + DATA.global_multiple.toFixed(2) + '×';
+    // The price below is recomputed by this page (priceFactors, above) from the snapshot's
+    // figures — the same formulas the program priced the board with — not read off the row.
+    var pf = priceFactors(row);
+    var sizeRefNote = price && price.peers >= MODEL.min_peers && price.ref_tvl
+      ? 'its own category peers’ median ' + money(row.size_ref_tvl)
+      : 'the whole peer set’s median ' + money(row.size_ref_tvl);
+    var medianNote;
+    if (price && price.peers >= MODEL.min_peers && price.median_ratio != null) {
+      medianNote = 'median ' + price.median_ratio.toFixed(2) + '× across ' + price.peers + ' tokenized peers, shrunk toward the global ' + DATA.global_multiple.toFixed(2) + '×';
+    } else if (row.neighbor_ratio != null) {
+      medianNote = 'its category is too thin to carry a median, so this blends the 8 tokenized protocols nearest it in TVL (their median ' +
+        row.neighbor_ratio.toFixed(2) + '×) with the global median ' + DATA.global_multiple.toFixed(2) + '×, half and half in log space';
+    } else {
+      medianNote = 'no tokenized peers near it in size either: priced at the global median ' + DATA.global_multiple.toFixed(2) + '×';
+    }
     var tiles = [
       { v: money(row.tvl_usd), l: 'TVL in the snapshot' },
       { v: money(row.implied_value_usd), l: 'implied launch value (rank #' + row.rank + ')' },
       { v: row.change_7d == null ? 'n/a' : (row.change_7d > 0 ? '+' : '') + row.change_7d.toFixed(1) + '%', l: 'TVL change, 7 days' },
       { v: row.age_days == null ? 'untracked' : row.age_days + ' days', l: 'token-free runway' + (row.listed_at ? ' (tracked since ' + row.listed_at + ')' : '') },
       { v: String(row.chains.length), l: 'chains: ' + (row.chains.slice(0, 4).join(', ') || 'none named') + (row.chains.length > 4 ? '…' : '') },
-      { v: row.category_multiple.toFixed(2) + '×', l: 'category multiple (' + (row.category || 'Uncategorized') + ')' },
+      { v: pf.multiple.toFixed(2) + '×', l: 'category multiple (' + (row.category || 'Uncategorized') + ')' },
     ];
     var factors =
       '<table class="factors">' +
       '<tr><td>TVL, the base figure</td><td class="num">' + moneyFull(row.tvl_usd) + '</td></tr>' +
-      '<tr><td>× category multiple — ' + esc(medianNote) + '</td><td class="num">× ' + row.category_multiple.toFixed(2) + '</td></tr>' +
-      '<tr><td>× growth — its 7-day TVL change, capped and halved</td><td class="num">× ' + row.growth_multiplier.toFixed(2) + '</td></tr>' +
-      '<tr><td>× runway — ' + (row.age_days == null ? 'no tracking date: priced at the median age' : row.age_days + ' days with no token') + '</td><td class="num">× ' + row.runway_multiplier.toFixed(2) + '</td></tr>' +
-      '<tr><td>× breadth — ' + row.chains.length + ' chain' + (row.chains.length === 1 ? '' : 's') + ' of distribution</td><td class="num">× ' + row.breadth_multiplier.toFixed(2) + '</td></tr>' +
-      '<tr><td>× size — at ' + money(row.tvl_usd) + ' of TVL against the peers\' median ' + money(DATA.ref_tvl) + ': the market pays a smaller multiple at this size</td><td class="num">× ' + row.size_multiplier.toFixed(2) + '</td></tr>' +
-      '<tr class="total"><td>= implied launch value</td><td class="num">' + moneyFull(row.implied_value_usd) + '</td></tr>' +
-      '</table>';
-    var thinNote = price && price.peers < 3
+      '<tr><td>× category multiple — ' + esc(medianNote) + '</td><td class="num">× ' + pf.multiple.toFixed(2) + '</td></tr>' +
+      '<tr><td>× growth — its 7-day TVL change, capped and halved</td><td class="num">× ' + pf.growth.toFixed(2) + '</td></tr>' +
+      '<tr><td>× runway — ' + (row.age_days == null ? 'no tracking date: priced at the median age' : row.age_days + ' days with no token') + '</td><td class="num">× ' + pf.runway.toFixed(2) + '</td></tr>' +
+      '<tr><td>× breadth — ' + row.chains.length + ' chain' + (row.chains.length === 1 ? '' : 's') + ' of distribution</td><td class="num">× ' + pf.breadth.toFixed(2) + '</td></tr>' +
+      '<tr><td>× size — at ' + money(row.tvl_usd) + ' of TVL against ' + sizeRefNote + ': the market pays a smaller multiple at this size</td><td class="num">× ' + pf.size.toFixed(2) + '</td></tr>' +
+      '<tr class="total"><td>= implied launch value</td><td class="num">' + moneyFull(pf.implied) + '</td></tr>' +
+      '</table>' +
+      '<p class="fineprint">This page just recomputed that price from the snapshot’s figures with the model’s own formulas ' +
+      '(the function priceFactors in this page’s source): it lands on ' + moneyFull(pf.implied) + ', and the board’s row says ' + moneyFull(row.implied_value_usd) +
+      (pf.implied === row.implied_value_usd ? ' — the same number, to the dollar.' : ' — within the rounding of the printed factors.') + '</p>';
+    var thinNote = price && price.peers < MODEL.min_peers
       ? '<p class="fineprint">Thin evidence: this category has ' + (price.peers === 0 ? 'no tokenized peer at all' : 'only ' + price.peers + ' tokenized peer' + (price.peers === 1 ? '' : 's')) +
-        ', so the board does not price from ' + (price.peers === 1 ? 'that single ratio' : 'them') + ' — it prices at the global median ' + DATA.global_multiple.toFixed(2) +
-        '× and marks the row thin. Treat the price as skip-grade: a prompt to look closer, not a number to size a farm by.</p>'
+        ', too few to carry its own median, so the board prices it from the tokenized protocols nearest it in size and marks the row thin. ' +
+        'Treat the price as skip-grade: a prompt to look closer, not a number to size a farm by.</p>'
       : '';
+    var band = '';
+    if (price && price.ratio_q1 != null && price.ratio_q3 != null && price.median_ratio) {
+      var bandLo = Math.round(pf.implied * (price.ratio_q1 / price.median_ratio));
+      var bandHi = Math.round(pf.implied * (price.ratio_q3 / price.median_ratio));
+      band = '<p class="fineprint">The band its evidence puts around the price: the peers’ middle half runs ' + price.ratio_q1.toFixed(2) + '× to ' +
+        price.ratio_q3.toFixed(2) + '×, which prices this protocol between ' + money(bandLo) + ' and ' + money(bandHi) +
+        '. The board’s number is the middle of that evidence, not the edge of it.</p>';
+    }
     var comps = (row.comps.length
       ? '<table class="factors"><thead><tr><th>Tokenized peer</th><th class="num">Market cap</th><th class="num">TVL</th><th class="num">Mcap / TVL</th></tr></thead><tbody>' +
         row.comps.map(function (c) {
           return '<tr><td>' + esc(c.name) + '</td><td class="num">' + money(c.mcap_usd) + '</td><td class="num">' + money(c.tvl_usd) + '</td><td class="num">' + c.ratio.toFixed(2) + '×</td></tr>';
         }).join('') + '</tbody></table>'
-      : '<p class="fineprint">No tokenized protocol in this category is near it in size, so its price leans on the category median itself.</p>') + thinNote;
+      : '<p class="fineprint">No tokenized protocol in this category is near it in size, so its price leans on the category median itself.</p>') + band + thinNote;
+    var verdictStrip =
+      '<div class="panelbox verdictbox"><h3>The verdict, netted to the dollar: <span class="verdict ' + verdictClass(row.verdict) + '">' + esc(row.verdict) + '</span></h3>' +
+      '<p class="small">The plan below spends about <b>' + money(row.plan_gas_usd) + '</b> of gas; the ' + money(row.plan_capital_usd) +
+      ' of capital sits in the position and comes back on unwind, so it is not a cost. Netted against the launch this board prices at ' + money(row.implied_value_usd) +
+      ', the plan pays for itself if this wallet’s allocation comes to <b>' + (row.breakeven_share_pct < 0.00005 ? 'under 0.0001' : row.breakeven_share_pct.toFixed(4)) + '%</b> of that launch. ' +
+      'At a reference allocation of 0.01% (worth ' + money(Math.round(row.implied_value_usd * 0.0001)) + ' at the implied price), the cover is <b>' + row.verdict_cover.toFixed(1) + '×</b> the net cost: ' +
+      'ten times covered is a Farm, twice a Farm small, under twice a Watch.</p></div>';
     var steps = row.farm_steps
       .map(function (s) {
         var at = s.indexOf(' Cost: ');
@@ -259,8 +353,8 @@
       '<div class="detail-head"><h2>' + esc(row.name) + '</h2>' + badge(row) + '</div>' +
       '<p class="detail-sub">' + esc(row.slug) + ' · ' + esc(row.category || 'Uncategorized') + ' · records no token in the snapshot as of ' + DATA.as_of + '</p>' +
       '<div class="tiles">' + tiles.map(function (t) { return '<div class="tile"><span>' + esc(t.l) + '</span><b>' + esc(t.v) + '</b></div>'; }).join('') + '</div>' +
+      verdictStrip +
       '<div class="panelbox"><h3>The price, line by line</h3>' + factors + '</div>' +
-      '<div class="panelbox"><h3>Priced against the market</h3>' + comps + '</div>' +
       '<div class="panelbox"><h3>The farm plan</h3>' +
       '<div class="planchips">' +
       '<span class="chip">Capital in position: <b>' + money(row.plan_capital_usd) + '</b></span>' +
@@ -271,7 +365,8 @@
       '</div>' +
       '<ol class="steps">' + steps + '</ol>' +
       '<p class="fineprint">Costs are the plan\'s own estimates from the protocol\'s chains and size, not quotes: check the app\'s own fee display before signing anything, and never pay a third party to claim a reward.</p>' +
-      '</div>';
+      '</div>' +
+      '<div class="panelbox"><h3>Priced against the market</h3>' + comps + '</div>';
     bindBack();
     window.scrollTo(0, 0);
   }

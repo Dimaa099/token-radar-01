@@ -91,12 +91,23 @@ table.board { border-collapse: collapse; width: 100%; min-width: 990px; }
 }
 .badge.watch { background: rgba(242, 176, 78, 0.15); color: var(--amber); border: 1px solid rgba(242, 176, 78, 0.45); }
 .badge.early { background: rgba(61, 220, 151, 0.10); color: var(--mint); border: 1px solid rgba(61, 220, 151, 0.35); }
+.verdict {
+  display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  padding: 0 6px; border-radius: 20px; vertical-align: 1px; white-space: nowrap;
+}
+.verdict.v-farm { background: rgba(61, 220, 151, 0.12); color: var(--mint); border: 1px solid rgba(61, 220, 151, 0.4); }
+.verdict.v-small { background: rgba(242, 176, 78, 0.13); color: var(--amber); border: 1px solid rgba(242, 176, 78, 0.42); }
+.verdict.v-watch { background: rgba(239, 100, 97, 0.12); color: var(--red); border: 1px solid rgba(239, 100, 97, 0.4); }
+.verdictbox .small { color: var(--muted); font-size: 13.5px; margin: 0; }
+.verdictbox .small b { color: var(--text); }
+.board .verdict { display: block; width: fit-content; margin-top: 3px; }
 .thin {
   display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
   padding: 0 6px; border-radius: 20px; vertical-align: 1px;
   background: rgba(239, 100, 97, 0.12); color: var(--red); border: 1px solid rgba(239, 100, 97, 0.4);
 }
 .cat { color: var(--muted); }
+.mini .slug { display: block; color: var(--faint); font-size: 11.5px; font-weight: 400; }
 .chains { color: var(--muted); font-size: 13px; }
 .pos { color: var(--mint); }
 .neg { color: var(--red); }

@@ -11,20 +11,36 @@
 //   peers      = the tokenized protocols in the same DefiLlama category
 //   ratio      = mcap_usd / tvl_usd for each peer
 //   multiple   = the category's median ratio, shrunk toward the global median ratio by the peer
-//                count (shrink K = 6) and clamped to [0.03, 1.20]; a category with fewer than 3
-//                peers prices at the global median
+//                count (shrink K = 6) and clamped to [0.03, 1.20]. A category with fewer than 3
+//                peers cannot carry its own median; comps-3 then priced it at the bare global
+//                median, so the board's largest rows rested on no local evidence at all.
+//                comps-4 prices a thin category from the 8 tokenized protocols nearest the
+//                protocol in TVL, whatever they do — the market's price for a protocol's size
+//                is real evidence about a protocol of that size — blended half-and-half with
+//                the global median in log space.
 //   growth     = 1 + clamp(change_7d, -60, 120) / 100 x 0.5
 //   runway     = 0.78 + 0.44 x sqrt(min(age_days, 1460) / 1460): the longer a protocol has run
 //                with no token, the more usage a launch would capitalise (age unknown: the
 //                snapshot's median age)
 //   breadth    = 1 + 0.025 x min(chains - 1, 8): distribution across chains is worth a premium
-//   size       = (tvl_usd / the tokenized peers' median TVL) ^ -0.25: the comps' own record
-//                says the market pays a smaller multiple the larger the protocol — the median
-//                ratio falls from 0.48 for the smallest third of tokenized protocols to 0.05
-//                for the largest — so a giant is not priced at a small protocol's multiple.
-//                The slope was fitted out of sample (tools/evaluate.mjs): it beat the untilted
-//                model on the held-out half of all 24 seeded splits, rank correlation intact.
+//   size       = (tvl_usd / reference TVL) ^ -0.25: the comps' own record says the market pays
+//                a smaller multiple the larger the protocol — the median ratio falls from 0.48
+//                for the smallest third of tokenized protocols to 0.05 for the largest — so a
+//                giant is not priced at a small protocol's multiple. comps-3 measured size
+//                against the whole peer set's median TVL; comps-4 measures it against the
+//                median TVL of the protocol's own category peers (the global median when the
+//                category is thin): a protocol is large or small next to the protocols it is
+//                actually priced against, and the yardstick should say so.
 //   implied    = max(1, round(tvl_usd x multiple x growth x runway x breadth x size))
+//
+// Both comps-4 changes were fixed as candidates before they were scored and were scored the
+// comps-3 way, harder (tools/evaluate2.mjs): each had to beat comps-3's mean held-out error on
+// the 24 seeded splits comps-3 was selected on AND on a second set of 24 splits it was never
+// selected against, without giving up rank correlation. Together they did (held-out mean
+// median |log10 error| 0.568/0.564 against comps-3's 0.582/0.588, split wins 16 and 19 of 24).
+// The dashboard also keeps the whole field honest: every one of the snapshot's pre-token
+// protocols is accounted for — ranked, or set aside with the reason printed — and every farm
+// plan carries a verdict netted to the dollar (see farmVerdict below).
 //
 // The same function scores every row; no protocol's name is ever special-cased. Each board row
 // carries the multiple it was priced at and the peer count behind it, so a reader can audit the
@@ -56,7 +72,7 @@ export interface Snapshot {
 }
 
 /** The model's version label: the dashboard names it. */
-export const MODEL_VERSION = 'comps-3';
+export const MODEL_VERSION = 'comps-4';
 
 /** How hard a thin category's median is pulled toward the global median. */
 export const SHRINK_K = 6;
@@ -103,6 +119,24 @@ export interface ModelParams {
    *  own record says the market pays a smaller multiple the larger the protocol (the median
    *  ratio falls by an order of magnitude from the smallest tercile to the largest); 0 = off. */
   size_beta: number;
+  /** Which peer set's median TVL the size tilt is measured against: 'global' (comps-3: every
+   *  tokenized protocol's median TVL) or 'category' (the protocol's own category peers' median
+   *  TVL, falling back to the global reference when the category is thin). The size effect is
+   *  a within-market phenomenon — a protocol is large or small next to the protocols it is
+   *  actually priced against — so the category reference is the honest yardstick. */
+  size_ref: 'global' | 'category';
+  /** When a category is too thin to carry its own median (fewer than min_peers tokenized
+   *  peers), price it instead from the `thin_neighbors` tokenized protocols nearest to it in
+   *  TVL, whatever their category, blended with the global median by thin_neighbor_blend
+   *  (in log space). 0 = off (comps-3: a thin category prices at the bare global median, so
+   *  the board's largest rows — the thin-category giants — are priced off no local evidence
+   *  at all). The nearest-size protocols are the evidence a thin category does have. */
+  thin_neighbors: number;
+  thin_neighbor_blend: number;
+  /** How a category's multiple is read off its peers' ratios: 'median' (comps-3) or 'trimlog'
+   *  (the trimmed mean of the log ratios, exponentiated: uses the whole peer distribution,
+   *  not just its middle one or two values). */
+  estimator: 'median' | 'trimlog';
   /** true: a tokenized protocol whose recorded market cap is zero is not a comparable — a dead
    *  record prices nothing — and is left out of the peer set and the blind test alike. */
   exclude_zero_cap_peers: boolean;
@@ -128,6 +162,16 @@ export const PARAMS: ModelParams = {
   // seeded splits (mean median |log10 error| 0.668 -> 0.582) with the rank correlation intact
   // (0.413 -> 0.406); steeper slopes kept buying error with rank. See tools/evaluate.mjs.
   size_beta: 0.25,
+  // comps-4's two evidence repairs, each fixed as a candidate before it was scored and each
+  // required to beat comps-3 on the comps-3 selection splits AND on a fresh confirmation set
+  // of 24 splits it was never selected against (tools/evaluate2.mjs): the size tilt is measured
+  // against the category peers' median TVL, and a thin category is priced from its 8 nearest
+  // tokenized protocols by TVL, blended with the global median. Together: held-out mean median
+  // |log10 error| 0.568/0.564 against comps-3's 0.582/0.588; split wins 16/24 and 19/24.
+  size_ref: 'category',
+  thin_neighbors: 8,
+  thin_neighbor_blend: 0.5,
+  estimator: 'median',
   exclude_zero_cap_peers: false,
 };
 /** How many live-token protocols the dashboard's Already trading view carries, by market cap. */
@@ -174,6 +218,27 @@ export interface CategoryPrice {
   peers: number;
   median_ratio: number | null;
   multiple: number;
+  /** The median TVL of the category's own tokenized peers: the size tilt's category yardstick. */
+  ref_tvl: number | null;
+  /** The peer ratios' lower and upper quartiles: the spread of what the market actually pays in
+   *  this category, so a price can be shown with the band its own evidence puts around it. */
+  ratio_q1: number | null;
+  ratio_q3: number | null;
+}
+
+/** A quartile of a non-empty list, by linear interpolation between the closest ranks. */
+function quartile(values: number[], q: number): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const at = (sorted.length - 1) * q;
+  const lo = Math.floor(at);
+  const hi = Math.ceil(at);
+  return lo === hi ? sorted[lo]! : sorted[lo]! + (sorted[hi]! - sorted[lo]!) * (at - lo);
+}
+
+/** One tokenized protocol as pricing evidence: its TVL and its market-cap-to-TVL ratio. */
+export interface PeerPoint {
+  tvl: number;
+  ratio: number;
 }
 
 /** The pricing table the whole board is priced from: per-category multiples and the global median. */
@@ -181,8 +246,33 @@ export interface Pricing {
   global_ratio: number;
   /** The median TVL of the tokenized peer set: the size tilt's reference point. */
   ref_tvl: number;
+  /** Every tokenized protocol's (TVL, ratio) point: the pool thin categories draw neighbours from. */
+  peers_all: PeerPoint[];
   byCategory: Map<string | null, CategoryPrice>;
   table: CategoryPrice[];
+}
+
+/**
+ * A category's central ratio under the model's estimator: the median (comps-3), or the trimmed
+ * mean of the log ratios — the middle half of the peers, averaged in log space and exponentiated
+ * back — which lets every peer in the middle of the distribution speak, not only the middle one.
+ */
+function centralRatio(ratios: number[], estimator: ModelParams['estimator']): number {
+  if (estimator === 'trimlog' && ratios.length >= 4) {
+    const logs = ratios.map((r) => Math.log(r)).sort((a, b) => a - b);
+    const trim = Math.floor(logs.length / 4);
+    const kept = logs.slice(trim, logs.length - trim);
+    return Math.exp(kept.reduce((a, b) => a + b, 0) / kept.length);
+  }
+  return median(ratios);
+}
+
+/** The median ratio of the `k` peer points nearest to `tvl` in log space, or null when there are none. */
+export function neighborMedianRatio(peers: PeerPoint[], tvl: number, k: number): number | null {
+  if (peers.length === 0 || tvl <= 0) return null;
+  const lt = Math.log(tvl);
+  const nearest = [...peers].sort((a, b) => Math.abs(Math.log(a.tvl) - lt) - Math.abs(Math.log(b.tvl) - lt)).slice(0, k);
+  return median(nearest.map((p) => p.ratio));
 }
 
 /**
@@ -191,33 +281,52 @@ export interface Pricing {
  */
 export function priceCategories(snapshot: Snapshot, params: ModelParams = PARAMS): Pricing {
   const ratiosByCategory = new Map<string | null, number[]>();
+  const tvlsByCategory = new Map<string | null, number[]>();
   const all: number[] = [];
   const peerTvls: number[] = [];
+  const peersAll: PeerPoint[] = [];
   for (const p of snapshot.protocols) {
     if (p.mcap_usd === null || p.tvl_usd <= 0) continue;
     if (params.exclude_zero_cap_peers && p.mcap_usd <= 0) continue;
     const ratio = p.mcap_usd / p.tvl_usd;
     all.push(ratio);
     peerTvls.push(p.tvl_usd);
+    peersAll.push({ tvl: p.tvl_usd, ratio });
     const list = ratiosByCategory.get(p.category) ?? [];
     list.push(ratio);
     ratiosByCategory.set(p.category, list);
+    const tvlList = tvlsByCategory.get(p.category) ?? [];
+    tvlList.push(p.tvl_usd);
+    tvlsByCategory.set(p.category, tvlList);
   }
-  const global = all.length > 0 ? median(all) : 0.17;
-  const refTvl = peerTvls.length > 0 ? median(peerTvls) : 1;
+  // The pricing table is rounded before it prices anything (medians and the global to four
+  // decimals, reference TVLs to whole dollars): every figure the dashboard prints is then the
+  // exact figure the price was made from, so a reader — or the page itself — can recompute any
+  // row's price from the printed table and land on the board's number to the dollar.
+  const global = round4(all.length > 0 ? median(all) : 0.17);
+  const refTvl = peerTvls.length > 0 ? Math.round(median(peerTvls)) : 1;
   const byCategory = new Map<string | null, CategoryPrice>();
   for (const [category, ratios] of ratiosByCategory) {
     const med = median(ratios);
+    const central = params.estimator === 'median' ? round4(med) : centralRatio(ratios, params.estimator);
     const shrunk = clamp(
-      (ratios.length * med + params.shrink_k * global) / (ratios.length + params.shrink_k),
+      (ratios.length * central + params.shrink_k * global) / (ratios.length + params.shrink_k),
       params.multiple_floor,
       params.multiple_cap,
     );
     const multiple = params.smooth || ratios.length >= params.min_peers ? shrunk : global;
-    byCategory.set(category, { category, peers: ratios.length, median_ratio: round4(med), multiple: round4(multiple) });
+    byCategory.set(category, {
+      category,
+      peers: ratios.length,
+      median_ratio: round4(med),
+      multiple: round4(multiple),
+      ref_tvl: Math.round(median(tvlsByCategory.get(category)!)),
+      ratio_q1: ratios.length >= 4 ? round4(quartile(ratios, 0.25)) : null,
+      ratio_q3: ratios.length >= 4 ? round4(quartile(ratios, 0.75)) : null,
+    });
   }
   const table = [...byCategory.values()].sort((a, b) => b.peers - a.peers || bySlugAsc(a.category ?? '', b.category ?? ''));
-  return { global_ratio: round4(global), ref_tvl: refTvl, byCategory, table };
+  return { global_ratio: global, ref_tvl: refTvl, peers_all: peersAll, byCategory, table };
 }
 
 /** The median age in days of the snapshot's dated protocols: the age an undated one is priced with. */
@@ -240,23 +349,49 @@ export interface Scored {
   runway_multiplier: number;
   breadth_multiplier: number;
   size_multiplier: number;
+  /** The reference TVL the size factor was measured against for this protocol. */
+  size_ref_tvl: number;
+  /** The nearest-size neighbours' median ratio, when a thin category was priced from them. */
+  neighbor_ratio: number | null;
   age_days: number | null;
 }
 
 /** Score one pre-token protocol: TVL x its category's peer multiple x growth x runway x breadth. */
 export function impliedValue(p: SnapshotProtocol, asOf: string, pricing: Pricing, medianAge: number, params: ModelParams = PARAMS): Scored {
   const price = pricing.byCategory.get(p.category);
-  const multiple = price?.multiple ?? pricing.global_ratio;
+  let multiple = price?.multiple ?? pricing.global_ratio;
   const peers = price?.peers ?? 0;
+  // A category too thin to carry its own median has one more source of evidence before the bare
+  // global median: the tokenized protocols nearest to this one in TVL, whatever they do. The
+  // market's price for a protocol's size is real evidence about a protocol of that size; blend
+  // it with the global median in log space so neither shouts the other down.
+  let neighborRatio: number | null = null;
+  if (params.thin_neighbors > 0 && peers < params.min_peers) {
+    const neighbour = neighborMedianRatio(pricing.peers_all, p.tvl_usd, params.thin_neighbors);
+    if (neighbour !== null && neighbour > 0) {
+      // Rounded before the blend, like the rest of the pricing table, so the printed
+      // neighbours' median is the exact figure the blend was made from.
+      neighborRatio = round4(neighbour);
+      const w = clamp(params.thin_neighbor_blend, 0, 1);
+      multiple = round4(Math.exp(w * Math.log(neighborRatio) + (1 - w) * Math.log(pricing.global_ratio)));
+    }
+  }
   const growthPct = clamp(finite(p.change_7d, 0), params.growth_floor, params.growth_cap);
   const growthMult = 1 + (growthPct / 100) * params.growth_weight;
   const age = ageDays(asOf, p.listed_at);
   const ageForModel = age ?? medianAge;
   const runwayMult = params.runway_floor + params.runway_range * Math.sqrt(clamp(ageForModel, 0, params.runway_days) / params.runway_days);
   const breadthMult = 1 + params.chain_step * Math.min(Math.max(p.chains.length - 1, 0), params.extra_chains);
+  // The size tilt's yardstick: the median TVL of the peers this price actually came from (the
+  // protocol's own category) when the model is set to measure size within the market it prices,
+  // else the whole peer set's median, as comps-3 did.
+  const refTvl =
+    params.size_ref === 'category' && price !== undefined && price.peers >= params.min_peers && price.ref_tvl !== null && price.ref_tvl > 0
+      ? price.ref_tvl
+      : pricing.ref_tvl;
   const sizeMult =
-    params.size_beta > 0 && pricing.ref_tvl > 0 && p.tvl_usd > 0
-      ? Math.pow(p.tvl_usd / pricing.ref_tvl, -params.size_beta)
+    params.size_beta > 0 && refTvl > 0 && p.tvl_usd > 0
+      ? Math.pow(p.tvl_usd / refTvl, -params.size_beta)
       : 1;
   const implied = Math.max(1, Math.round(p.tvl_usd * multiple * growthMult * runwayMult * breadthMult * sizeMult));
   return {
@@ -268,6 +403,8 @@ export function impliedValue(p: SnapshotProtocol, asOf: string, pricing: Pricing
     runway_multiplier: round4(runwayMult),
     breadth_multiplier: round4(breadthMult),
     size_multiplier: round4(sizeMult),
+    size_ref_tvl: Math.round(refTvl),
+    neighbor_ratio: neighborRatio,
     age_days: age,
   };
 }
@@ -501,6 +638,43 @@ export function farmPlan(p: SnapshotProtocol, age: number | null): FarmPlan {
   return { steps, capital_usd: x.capital, gas_usd: x.gas * 3 + weeklyGas * weeks, weeks, weekly_minutes: play.weeklyMinutes };
 }
 
+/** The reference allocation the verdict is struck at: a small farmer's plausible share of a launch. */
+export const VERDICT_REFERENCE_SHARE = 0.0001;
+
+/** A farm plan's verdict, netted to the dollar. */
+export interface FarmVerdict {
+  /** 'Farm' | 'Farm small' | 'Watch': what the plan's own arithmetic says. */
+  verdict: 'Farm' | 'Farm small' | 'Watch';
+  /** What the plan actually spends: its gas. The capital stays in the position and returns on unwind. */
+  net_cost_usd: number;
+  /** The share of the implied launch value at which the allocation's worth covers the net cost. */
+  breakeven_share_pct: number;
+  /** How many times over a reference allocation (VERDICT_REFERENCE_SHARE of the launch) covers the net cost. */
+  cover: number;
+}
+
+/**
+ * Net a plan to the dollar and say whether it pays. The plan's capital is not a cost — it sits
+ * in the position and comes back on unwind — so the plan spends its gas and the reader's
+ * minutes. Against that, the honest question is not "will there be an airdrop" (nobody knows)
+ * but "how much of the launch would this wallet's allocation have to be worth to cover what
+ * the plan spends": the break-even share. The verdict tiers that share at a reference
+ * allocation of 0.01% of the launch: covered ten times over is a Farm, twice over a Farm
+ * small, and under twice a Watch — the tail rows whose implied value is too small for a small
+ * wallet's plausible share to pay the gas are told so, in numbers, on their own row.
+ */
+export function farmVerdict(impliedValueUsd: number, plan: FarmPlan): FarmVerdict {
+  const net = plan.gas_usd;
+  const referenceValue = impliedValueUsd * VERDICT_REFERENCE_SHARE;
+  const cover = net > 0 ? referenceValue / net : 0;
+  return {
+    verdict: cover >= 10 ? 'Farm' : cover >= 2 ? 'Farm small' : 'Watch',
+    net_cost_usd: net,
+    breakeven_share_pct: impliedValueUsd > 0 ? round4((net / impliedValueUsd) * 100) : 0,
+    cover: Math.round(cover * 10) / 10,
+  };
+}
+
 // ---------------------------------------------------------------- the board
 
 /** A tokenized peer a pre-token row is priced against: the market's own figures for its category. */
@@ -535,8 +709,32 @@ export interface BoardRow {
   plan_gas_usd: number;
   plan_weeks: number;
   plan_weekly_minutes: number;
+  /** The reference TVL this row's size factor was measured against (its category peers' median, or the whole set's). */
+  size_ref_tvl: number;
+  /** The nearest-size neighbours' median ratio, when this row's thin category was priced from them. */
+  neighbor_ratio: number | null;
+  /** The plan's verdict, netted to the dollar: what it spends, and the launch share that covers it. */
+  verdict: 'Farm' | 'Farm small' | 'Watch';
+  verdict_cover: number;
+  breakeven_share_pct: number;
   comps: Comparable[];
   farm_steps: string[];
+}
+
+/** One pre-token protocol the board set aside, with the reason printed next to it. */
+export interface SetAside {
+  slug: string;
+  name: string;
+  category: string | null;
+  tvl_usd: number;
+  reason: string;
+}
+
+/** The whole pre-token field, accounted for: how many were ranked, and every set-aside with its reason. */
+export interface AuditTrail {
+  pre_token: number;
+  ranked: number;
+  set_aside: SetAside[];
 }
 
 /** A live-token protocol: it already trades, so the board shows the market's own value, not a model's. */
@@ -579,6 +777,8 @@ export interface RadarData {
   early_size: number;
   live_size: number;
   validation: ValidationStats | null;
+  /** The whole pre-token field accounted for: ranked rows plus every set-aside with its reason. */
+  audit: AuditTrail;
   rows: BoardRow[];
   live: LiveRow[];
 }
@@ -733,6 +933,7 @@ export function buildBoard(snapshot: Snapshot, pricing: Pricing, medianAge: numb
   scored.sort((a, b) => b.s.implied - a.s.implied || b.p.tvl_usd - a.p.tvl_usd || bySlugAsc(a.p.slug, b.p.slug));
   return scored.map(({ p, s }, i) => {
     const plan = farmPlan(p, s.age_days);
+    const verdict = farmVerdict(s.implied, plan);
     return {
       rank: i + 1,
       slug: p.slug,
@@ -756,10 +957,43 @@ export function buildBoard(snapshot: Snapshot, pricing: Pricing, medianAge: numb
       plan_gas_usd: plan.gas_usd,
       plan_weeks: plan.weeks,
       plan_weekly_minutes: plan.weekly_minutes,
+      size_ref_tvl: s.size_ref_tvl,
+      neighbor_ratio: s.neighbor_ratio,
+      verdict: verdict.verdict,
+      verdict_cover: verdict.cover,
+      breakeven_share_pct: verdict.breakeven_share_pct,
       comps: comparables(p, snapshot.protocols),
       farm_steps: plan.steps,
     };
   });
+}
+
+/**
+ * Every pre-token protocol in the snapshot, accounted for: the ones the board ranks, and the
+ * ones it sets aside, each with the reason the board's own screens produced — the same checks,
+ * in the same order, that buildBoard applies (an exchange's own product and a versioned pool
+ * are out at any size; above the floor the watchlist's product screen applies too). A radar
+ * that silently drops a third of the field is a radar whose coverage claim cannot be checked;
+ * this register is the claim, checkable row by row.
+ */
+export function auditTrail(snapshot: Snapshot, board: BoardRow[]): AuditTrail {
+  const ranked = new Set(board.map((r) => r.slug));
+  const setAside: SetAside[] = [];
+  let preToken = 0;
+  for (const p of snapshot.protocols) {
+    if (!isPreToken(p)) continue;
+    preToken++;
+    if (ranked.has(p.slug)) continue;
+    let reason: string;
+    if (p.category === 'CEX') reason = 'An exchange’s own product, not an independent launch';
+    else if (VERSIONED.test(p.name)) reason = 'A versioned pool of another protocol, not a launch of its own';
+    else if (p.category !== null && PRODUCT_CATEGORIES.has(p.category)) reason = `A wrapped, staked or bridged product of a token that already trades (${p.category})`;
+    else if (PRODUCT_WORD.test(p.name)) reason = 'Named as a wrapped or staked product of another token';
+    else reason = 'Named with an exchange’s name: that exchange’s product, not an independent launch';
+    setAside.push({ slug: p.slug, name: p.name, category: p.category, tvl_usd: p.tvl_usd, reason });
+  }
+  setAside.sort((a, b) => b.tvl_usd - a.tvl_usd || bySlugAsc(a.slug, b.slug));
+  return { pre_token: preToken, ranked: board.length, set_aside: setAside };
 }
 
 /** The live-token protocols, by market cap, for the dashboard's Already trading view. */
@@ -800,6 +1034,7 @@ export function buildRadar(snapshot: Snapshot, params: ModelParams = PARAMS): { 
     early_size: board.filter((r) => !r.watchlist).length,
     live_size: live.length,
     validation: backtestModel(snapshot, params),
+    audit: auditTrail(snapshot, board),
     rows: board,
     live,
   };

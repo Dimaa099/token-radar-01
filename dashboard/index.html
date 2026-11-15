@@ -117,19 +117,41 @@
       A protocol with no tracking date is priced at the snapshot's median age.</li>
       <li><strong>Breadth.</strong> +2.5% per chain past the first, up to eight: distribution is
       worth a premium, and it is the smallest factor on purpose.</li>
-      <li><strong>Size.</strong> The multiple is tilted by (this TVL / the tokenized peers' median
-      TVL) to the power -0.25. The comparables' own record demands it: across the snapshot's
-      tokenized protocols, the median market-cap-to-TVL ratio falls from 0.48 for the smallest
-      third to 0.05 for the largest — the market simply does not pay a giant the multiple it pays
-      a small protocol, so this board does not either. The slope was fitted, not guessed: tested
-      out of sample on the tokenized protocols (each priced blind, itself left out), a slope of
-      0.25 beat the untilted model on the held-out half of all 24 seeded splits, with the ranking
-      correlation intact; steeper slopes kept buying a little error with a lot of ranking.</li>
-      <li><strong>Thin evidence is marked, not hidden.</strong> A category with fewer than three
-      tokenized peers cannot carry its own median, so its rows price at the global median and the
-      board marks their multiple <em>thin</em>. The price is the board's honest fallback, printed
-      as one: read a thin row as a skip-grade price — a reason to look closer, not a number to
-      size a farm by.</li>
+      <li><strong>Size.</strong> The multiple is tilted by (this TVL / a reference TVL) to the
+      power -0.25. The comparables' own record demands it: across the snapshot's tokenized
+      protocols, the median market-cap-to-TVL ratio falls from 0.48 for the smallest third to
+      0.05 for the largest — the market simply does not pay a giant the multiple it pays a small
+      protocol, so this board does not either. The slope was fitted, not guessed: tested out of
+      sample on the tokenized protocols (each priced blind, itself left out), a slope of 0.25
+      beat the untilted model on the held-out half of all 24 seeded splits, with the ranking
+      correlation intact; steeper slopes kept buying a little error with a lot of ranking. The
+      reference is the median TVL of the protocol's <em>own category peers</em> — a protocol is
+      large or small next to the protocols it is actually priced against — falling back to the
+      whole peer set's median when the category is thin. That yardstick was itself put to the
+      same out-of-sample test before it shipped, against a second set of splits the selection
+      never saw.</li>
+      <li><strong>Thin evidence is marked, not hidden — and it is evidence, not a shrug.</strong>
+      A category with fewer than three tokenized peers cannot carry its own median. An earlier
+      version of this model priced such rows at the bare global median, which left the board's
+      largest rows — the thin-category giants — resting on no local evidence at all. Now a thin
+      row is priced from the eight tokenized protocols nearest it in TVL, whatever they do: the
+      market's price for a protocol's <em>size</em> is real evidence about a protocol of that
+      size. Their median is blended half-and-half with the global median in log space, the row
+      is marked <em>thin</em>, and its detail view names the neighbours' median it used. Read a
+      thin row as a skip-grade price — a reason to look closer, not a number to size a farm by.</li>
+      <li><strong>Every plan is netted to a verdict.</strong> A plan's capital is not a cost — it
+      sits in the position and returns on unwind — so each plan is netted to what it actually
+      spends, its gas, and set against the launch the board prices: the detail view states the
+      break-even share, the slice of the launch at which the allocation's worth covers the gas,
+      and a verdict struck at a reference allocation of 0.01% of the launch (Farm at ten times
+      covered, Farm small at twice, Watch below that). The tail rows whose implied value is too
+      small for a small wallet's plausible share to pay their gas are told so, in numbers, on
+      their own row.</li>
+      <li><strong>The pricing table is rounded before it prices.</strong> Every figure this page
+      prints — the category medians, the global median, the reference TVLs — is the exact figure
+      the price was made from, so the detail view can recompute any row's price from the printed
+      figures and land on the board's number to the dollar. It does, in this page's own code,
+      every time a row is opened.</li>
       <li><strong>Who gets ranked.</strong> Every watchlist protocol, plus every other protocol that
       records no token. Above the watchlist floor a candidate must also pass the watchlist's own
       product screen, so a wrapped, staked or bridged product of a token that already trades (the
@@ -151,6 +173,15 @@
     protocol can run for years with no token and never issue one. The farm plans assume the reader
     wants the position anyway if the protocol's own rewards make it worthwhile, and every plan says
     never to pay anyone to "claim" an airdrop.</p>
+    <h2 id="audithead" style="margin-top:22px">Every pre-token protocol, accounted for</h2>
+    <p>A coverage claim you cannot check is a slogan, so here is the whole field: every protocol in
+    the snapshot that records no token, ranked on the board or set aside below with the reason the
+    board's own screens produced — an exchange's own product and a versioned pool are out at any
+    size, and above the watchlist floor the watchlist's own product screen applies, so a wrapped,
+    staked or bridged product of a token that already trades never poses as a launch still to come.
+    Nothing pre-token is dropped silently.</p>
+    <div id="auditbox"></div>
+    <div id="auditregister" style="margin-top:14px"></div>
   </section>
 
   <section id="detail" hidden></section>

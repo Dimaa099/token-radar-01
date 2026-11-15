@@ -97,6 +97,7 @@ const validationLine =
 
 process.stdout.write(
   `launch radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows ranked (${radar.early_size} beyond the watchlist, ${radar.live_size} live set aside)\n` +
+    `launch radar: audit: ${radar.audit.pre_token} pre-token protocols accounted for: ${radar.audit.ranked} ranked, ${radar.audit.set_aside.length} set aside, every one with its reason printed in the dashboard's data\n` +
     validationLine +
     `launch radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (${pageFiles.length} files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );
