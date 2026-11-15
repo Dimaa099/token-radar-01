@@ -18,11 +18,19 @@
 //                with no token, the more usage a launch would capitalise (age unknown: the
 //                snapshot's median age)
 //   breadth    = 1 + 0.025 x min(chains - 1, 8): distribution across chains is worth a premium
-//   implied    = max(1, round(tvl_usd x multiple x growth x runway x breadth))
+//   size       = (tvl_usd / the tokenized peers' median TVL) ^ -0.25: the comps' own record
+//                says the market pays a smaller multiple the larger the protocol — the median
+//                ratio falls from 0.48 for the smallest third of tokenized protocols to 0.05
+//                for the largest — so a giant is not priced at a small protocol's multiple.
+//                The slope was fitted out of sample (tools/evaluate.mjs): it beat the untilted
+//                model on the held-out half of all 24 seeded splits, rank correlation intact.
+//   implied    = max(1, round(tvl_usd x multiple x growth x runway x breadth x size))
 //
 // The same function scores every row; no protocol's name is ever special-cased. Each board row
 // carries the multiple it was priced at and the peer count behind it, so a reader can audit the
-// price back to the snapshot.
+// price back to the snapshot. And on every run the model grades itself: backtestModel below
+// hides each tokenized protocol's market cap in turn, prices it blind with this same function,
+// and reports how far off it was — the dashboard prints the result next to the model.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -48,7 +56,7 @@ export interface Snapshot {
 }
 
 /** The model's version label: the dashboard names it. */
-export const MODEL_VERSION = 'comps-2';
+export const MODEL_VERSION = 'comps-3';
 
 /** How hard a thin category's median is pulled toward the global median. */
 export const SHRINK_K = 6;
@@ -68,6 +76,60 @@ export const RUNWAY_DAYS = 1460;
 /** The breadth premium: this much per extra chain, up to EXTRA_CHAINS chains past the first. */
 export const CHAIN_STEP = 0.025;
 export const EXTRA_CHAINS = 8;
+
+/**
+ * The model's free parameters as one object, so the backtest below can price the snapshot under
+ * any candidate setting through the very code the board runs. PARAMS is the setting the board
+ * ships; the constants above are where comps-2 started, kept as the record of the hand-set model
+ * the fit was measured against.
+ */
+export interface ModelParams {
+  shrink_k: number;
+  min_peers: number;
+  /** true: every category's median is shrunk toward the global by its peer count, however thin.
+   *  false (comps-2): a category under min_peers prices at the global median outright. */
+  smooth: boolean;
+  multiple_floor: number;
+  multiple_cap: number;
+  growth_floor: number;
+  growth_cap: number;
+  growth_weight: number;
+  runway_floor: number;
+  runway_range: number;
+  runway_days: number;
+  chain_step: number;
+  extra_chains: number;
+  /** The size tilt: the multiple is multiplied by (tvl / reference tvl)^-size_beta. The comps'
+   *  own record says the market pays a smaller multiple the larger the protocol (the median
+   *  ratio falls by an order of magnitude from the smallest tercile to the largest); 0 = off. */
+  size_beta: number;
+  /** true: a tokenized protocol whose recorded market cap is zero is not a comparable — a dead
+   *  record prices nothing — and is left out of the peer set and the blind test alike. */
+  exclude_zero_cap_peers: boolean;
+}
+
+/** The parameters the board prices with. */
+export const PARAMS: ModelParams = {
+  shrink_k: SHRINK_K,
+  min_peers: MIN_PEERS,
+  smooth: false,
+  multiple_floor: MULTIPLE_FLOOR,
+  multiple_cap: MULTIPLE_CAP,
+  growth_floor: GROWTH_FLOOR,
+  growth_cap: GROWTH_CAP,
+  growth_weight: GROWTH_WEIGHT,
+  runway_floor: RUNWAY_FLOOR,
+  runway_range: RUNWAY_RANGE,
+  runway_days: RUNWAY_DAYS,
+  chain_step: CHAIN_STEP,
+  extra_chains: EXTRA_CHAINS,
+  // Fitted, not hand-set: on the sealed snapshot's 128 tokenized protocols with a positive
+  // recorded cap, a size slope of 0.25 beat the comps-2 setting on the held-out half of all 24
+  // seeded splits (mean median |log10 error| 0.668 -> 0.582) with the rank correlation intact
+  // (0.413 -> 0.406); steeper slopes kept buying error with rank. See tools/evaluate.mjs.
+  size_beta: 0.25,
+  exclude_zero_cap_peers: false,
+};
 /** How many live-token protocols the dashboard's Already trading view carries, by market cap. */
 export const LIVE_ROWS = 40;
 
@@ -117,6 +179,8 @@ export interface CategoryPrice {
 /** The pricing table the whole board is priced from: per-category multiples and the global median. */
 export interface Pricing {
   global_ratio: number;
+  /** The median TVL of the tokenized peer set: the size tilt's reference point. */
+  ref_tvl: number;
   byCategory: Map<string | null, CategoryPrice>;
   table: CategoryPrice[];
 }
@@ -125,29 +189,35 @@ export interface Pricing {
  * Price every category from the snapshot's tokenized protocols: the median market-cap-to-TVL ratio
  * of its peers, shrunk toward the global median by the peer count, clamped to the model's band.
  */
-export function priceCategories(snapshot: Snapshot): Pricing {
+export function priceCategories(snapshot: Snapshot, params: ModelParams = PARAMS): Pricing {
   const ratiosByCategory = new Map<string | null, number[]>();
   const all: number[] = [];
+  const peerTvls: number[] = [];
   for (const p of snapshot.protocols) {
     if (p.mcap_usd === null || p.tvl_usd <= 0) continue;
+    if (params.exclude_zero_cap_peers && p.mcap_usd <= 0) continue;
     const ratio = p.mcap_usd / p.tvl_usd;
     all.push(ratio);
+    peerTvls.push(p.tvl_usd);
     const list = ratiosByCategory.get(p.category) ?? [];
     list.push(ratio);
     ratiosByCategory.set(p.category, list);
   }
   const global = all.length > 0 ? median(all) : 0.17;
+  const refTvl = peerTvls.length > 0 ? median(peerTvls) : 1;
   const byCategory = new Map<string | null, CategoryPrice>();
   for (const [category, ratios] of ratiosByCategory) {
     const med = median(ratios);
-    const multiple =
-      ratios.length >= MIN_PEERS
-        ? clamp((ratios.length * med + SHRINK_K * global) / (ratios.length + SHRINK_K), MULTIPLE_FLOOR, MULTIPLE_CAP)
-        : global;
+    const shrunk = clamp(
+      (ratios.length * med + params.shrink_k * global) / (ratios.length + params.shrink_k),
+      params.multiple_floor,
+      params.multiple_cap,
+    );
+    const multiple = params.smooth || ratios.length >= params.min_peers ? shrunk : global;
     byCategory.set(category, { category, peers: ratios.length, median_ratio: round4(med), multiple: round4(multiple) });
   }
   const table = [...byCategory.values()].sort((a, b) => b.peers - a.peers || bySlugAsc(a.category ?? '', b.category ?? ''));
-  return { global_ratio: round4(global), byCategory, table };
+  return { global_ratio: round4(global), ref_tvl: refTvl, byCategory, table };
 }
 
 /** The median age in days of the snapshot's dated protocols: the age an undated one is priced with. */
@@ -160,7 +230,7 @@ export function medianAgeDays(snapshot: Snapshot): number {
   return ages.length > 0 ? Math.round(median(ages)) : 365;
 }
 
-/** The four factors and the implied value one protocol gets, priced from the snapshot. */
+/** The factors and the implied value one protocol gets, priced from the snapshot. */
 export interface Scored {
   implied: number;
   multiple: number;
@@ -169,21 +239,26 @@ export interface Scored {
   growth_multiplier: number;
   runway_multiplier: number;
   breadth_multiplier: number;
+  size_multiplier: number;
   age_days: number | null;
 }
 
 /** Score one pre-token protocol: TVL x its category's peer multiple x growth x runway x breadth. */
-export function impliedValue(p: SnapshotProtocol, asOf: string, pricing: Pricing, medianAge: number): Scored {
+export function impliedValue(p: SnapshotProtocol, asOf: string, pricing: Pricing, medianAge: number, params: ModelParams = PARAMS): Scored {
   const price = pricing.byCategory.get(p.category);
   const multiple = price?.multiple ?? pricing.global_ratio;
   const peers = price?.peers ?? 0;
-  const growthPct = clamp(finite(p.change_7d, 0), GROWTH_FLOOR, GROWTH_CAP);
-  const growthMult = 1 + (growthPct / 100) * GROWTH_WEIGHT;
+  const growthPct = clamp(finite(p.change_7d, 0), params.growth_floor, params.growth_cap);
+  const growthMult = 1 + (growthPct / 100) * params.growth_weight;
   const age = ageDays(asOf, p.listed_at);
   const ageForModel = age ?? medianAge;
-  const runwayMult = RUNWAY_FLOOR + RUNWAY_RANGE * Math.sqrt(clamp(ageForModel, 0, RUNWAY_DAYS) / RUNWAY_DAYS);
-  const breadthMult = 1 + CHAIN_STEP * Math.min(Math.max(p.chains.length - 1, 0), EXTRA_CHAINS);
-  const implied = Math.max(1, Math.round(p.tvl_usd * multiple * growthMult * runwayMult * breadthMult));
+  const runwayMult = params.runway_floor + params.runway_range * Math.sqrt(clamp(ageForModel, 0, params.runway_days) / params.runway_days);
+  const breadthMult = 1 + params.chain_step * Math.min(Math.max(p.chains.length - 1, 0), params.extra_chains);
+  const sizeMult =
+    params.size_beta > 0 && pricing.ref_tvl > 0 && p.tvl_usd > 0
+      ? Math.pow(p.tvl_usd / pricing.ref_tvl, -params.size_beta)
+      : 1;
+  const implied = Math.max(1, Math.round(p.tvl_usd * multiple * growthMult * runwayMult * breadthMult * sizeMult));
   return {
     implied,
     multiple,
@@ -192,6 +267,7 @@ export function impliedValue(p: SnapshotProtocol, asOf: string, pricing: Pricing
     growth_multiplier: round4(growthMult),
     runway_multiplier: round4(runwayMult),
     breadth_multiplier: round4(breadthMult),
+    size_multiplier: round4(sizeMult),
     age_days: age,
   };
 }
@@ -454,6 +530,7 @@ export interface BoardRow {
   growth_multiplier: number;
   runway_multiplier: number;
   breadth_multiplier: number;
+  size_multiplier: number;
   plan_capital_usd: number;
   plan_gas_usd: number;
   plan_weeks: number;
@@ -474,6 +551,18 @@ export interface LiveRow {
   ratio: number | null;
 }
 
+/** How the model scores when it is made to price protocols whose token already trades, blind. */
+export interface ValidationStats {
+  /** How many tokenized protocols were priced leave-one-out. */
+  protocols: number;
+  /** The median absolute log10 error: the typical price is off by a factor of 10^this. */
+  median_abs_log10_error: number;
+  /** The share of blind prices that land within a factor of two of the actual market cap. */
+  within_2x_pct: number;
+  /** Spearman rank correlation between the blind prices and the actual market caps. */
+  spearman: number;
+}
+
 /** Everything the dashboard renders: the board, the live set, and the pricing table behind it. */
 export interface RadarData {
   as_of: string;
@@ -481,14 +570,95 @@ export interface RadarData {
   floor_usd: number;
   model_version: string;
   global_multiple: number;
+  /** The tokenized peers' median TVL: the size factor's reference point. */
+  ref_tvl: number;
   median_age_days: number;
   categories: CategoryPrice[];
   watchlist_size: number;
   board_size: number;
   early_size: number;
   live_size: number;
+  validation: ValidationStats | null;
   rows: BoardRow[];
   live: LiveRow[];
+}
+
+/** Average ranks (ties share) of a list of values, for the Spearman correlation. */
+function ranksOf(values: number[]): number[] {
+  const order = values.map((v, i) => ({ v, i })).sort((a, b) => a.v - b.v);
+  const ranks = new Array<number>(values.length);
+  for (let lo = 0; lo < order.length; ) {
+    let hi = lo;
+    while (hi + 1 < order.length && order[hi + 1]!.v === order[lo]!.v) hi++;
+    const rank = (lo + hi) / 2 + 1;
+    for (let k = lo; k <= hi; k++) ranks[order[k]!.i] = rank;
+    lo = hi + 1;
+  }
+  return ranks;
+}
+
+/** The Spearman rank correlation of two equal-length lists. */
+function spearman(xs: number[], ys: number[]): number {
+  const rx = ranksOf(xs);
+  const ry = ranksOf(ys);
+  const n = xs.length;
+  const mx = rx.reduce((a, b) => a + b, 0) / n;
+  const my = ry.reduce((a, b) => a + b, 0) / n;
+  let cov = 0;
+  let vx = 0;
+  let vy = 0;
+  for (let i = 0; i < n; i++) {
+    cov += (rx[i]! - mx) * (ry[i]! - my);
+    vx += (rx[i]! - mx) ** 2;
+    vy += (ry[i]! - my) ** 2;
+  }
+  return vx > 0 && vy > 0 ? cov / Math.sqrt(vx * vy) : 0;
+}
+
+/**
+ * The out-of-sample test the model sets itself on every run: take each protocol whose token
+ * already trades, hide its market cap, price it with the same function that prices the board —
+ * its category's multiple rebuilt without it, so it never prices itself — and compare the blind
+ * price with the market cap it actually carries. A pricing model that cannot do this on the
+ * protocols whose answer is known has no business pricing the ones whose answer is not.
+ */
+/** One blind price from the leave-one-out test: the protocol, what the model said, what the market says. */
+export interface LooPrediction {
+  slug: string;
+  predicted: number;
+  actual: number;
+}
+
+/** Every tokenized protocol priced blind, leave-one-out, under `params`. */
+export function looPredictions(snapshot: Snapshot, params: ModelParams = PARAMS): LooPrediction[] {
+  const targets = snapshot.protocols.filter((p) => p.mcap_usd !== null && p.mcap_usd > 0 && p.tvl_usd > 0);
+  const medianAge = medianAgeDays(snapshot);
+  return targets.map((t) => {
+    const masked: Snapshot = {
+      ...snapshot,
+      protocols: snapshot.protocols.map((p) => (p.slug === t.slug ? { ...p, mcap_usd: null } : p)),
+    };
+    const pricing = priceCategories(masked, params);
+    const s = impliedValue(t, snapshot.as_of, pricing, medianAge, params);
+    return { slug: t.slug, predicted: s.implied, actual: t.mcap_usd! };
+  });
+}
+
+/** The summary statistics of a set of blind prices: typical error, within-2x share, rank correlation. */
+export function summarizeLoo(preds: LooPrediction[]): ValidationStats | null {
+  if (preds.length < 20) return null;
+  const absErr = preds.map((p) => Math.abs(Math.log10(p.predicted / p.actual)));
+  const within = absErr.filter((e) => e <= Math.log10(2)).length;
+  return {
+    protocols: preds.length,
+    median_abs_log10_error: round4(median(absErr)),
+    within_2x_pct: Math.round((within / preds.length) * 1000) / 10,
+    spearman: round4(spearman(preds.map((p) => p.predicted), preds.map((p) => p.actual))),
+  };
+}
+
+export function backtestModel(snapshot: Snapshot, params: ModelParams = PARAMS): ValidationStats | null {
+  return summarizeLoo(looPredictions(snapshot, params));
 }
 
 /** DefiLlama's version-marker rule: a name ending in a release is a pool of another protocol. */
@@ -541,7 +711,7 @@ export function comparables(p: SnapshotProtocol, protocols: SnapshotProtocol[]):
 }
 
 /** The protocols the board ranks, strongest first, with ranks 1..n. */
-export function buildBoard(snapshot: Snapshot, pricing: Pricing, medianAge: number): BoardRow[] {
+export function buildBoard(snapshot: Snapshot, pricing: Pricing, medianAge: number, params: ModelParams = PARAMS): BoardRow[] {
   const index = bySlug(snapshot.protocols);
   const watch = new Set(snapshot.watchlist);
   const chosen = new Map<string, SnapshotProtocol>();
@@ -559,7 +729,7 @@ export function buildBoard(snapshot: Snapshot, pricing: Pricing, medianAge: numb
     if (p.tvl_usd >= snapshot.floor_usd && !passesProductScreen(p)) continue;
     chosen.set(p.slug, p);
   }
-  const scored = [...chosen.values()].map((p) => ({ p, s: impliedValue(p, snapshot.as_of, pricing, medianAge) }));
+  const scored = [...chosen.values()].map((p) => ({ p, s: impliedValue(p, snapshot.as_of, pricing, medianAge, params) }));
   scored.sort((a, b) => b.s.implied - a.s.implied || b.p.tvl_usd - a.p.tvl_usd || bySlugAsc(a.p.slug, b.p.slug));
   return scored.map(({ p, s }, i) => {
     const plan = farmPlan(p, s.age_days);
@@ -581,6 +751,7 @@ export function buildBoard(snapshot: Snapshot, pricing: Pricing, medianAge: numb
       growth_multiplier: s.growth_multiplier,
       runway_multiplier: s.runway_multiplier,
       breadth_multiplier: s.breadth_multiplier,
+      size_multiplier: s.size_multiplier,
       plan_capital_usd: plan.capital_usd,
       plan_gas_usd: plan.gas_usd,
       plan_weeks: plan.weeks,
@@ -610,10 +781,10 @@ export function liveRows(snapshot: Snapshot): LiveRow[] {
 }
 
 /** Everything the entry writes, from the snapshot: the priced board and the dashboard's data. */
-export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: RadarData } {
-  const pricing = priceCategories(snapshot);
+export function buildRadar(snapshot: Snapshot, params: ModelParams = PARAMS): { board: BoardRow[]; radar: RadarData } {
+  const pricing = priceCategories(snapshot, params);
   const medianAge = medianAgeDays(snapshot);
-  const board = buildBoard(snapshot, pricing, medianAge);
+  const board = buildBoard(snapshot, pricing, medianAge, params);
   const live = liveRows(snapshot);
   const radar: RadarData = {
     as_of: snapshot.as_of,
@@ -621,12 +792,14 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     floor_usd: snapshot.floor_usd,
     model_version: MODEL_VERSION,
     global_multiple: pricing.global_ratio,
+    ref_tvl: pricing.ref_tvl,
     median_age_days: medianAge,
     categories: pricing.table,
     watchlist_size: snapshot.watchlist.length,
     board_size: board.length,
     early_size: board.filter((r) => !r.watchlist).length,
     live_size: live.length,
+    validation: backtestModel(snapshot, params),
     rows: board,
     live,
   };
@@ -694,6 +867,23 @@ export function boardIssue(board: BoardRow[], snapshot: Snapshot): string | null
     if (r.farm_steps.length < 3 || r.farm_steps.length > 12) return `${r.slug} has ${r.farm_steps.length} farm steps`;
     for (const s of r.farm_steps) if (s.trim().length < 20 || s.trim().length > 600) return `${r.slug} has a farm step of ${s.trim().length} characters`;
     if (!Number.isSafeInteger(r.implied_value_usd) || r.implied_value_usd <= 0) return `${r.slug} has implied value ${r.implied_value_usd}`;
+  }
+  return null;
+}
+
+/**
+ * Why a board's rows do not recompute from their own printed factors, or null: every row carries
+ * the multiple and the four multipliers its price was built from, so a reader — or this audit —
+ * can multiply them back out and land on the row's implied value, within the rounding the row
+ * itself declares. A board whose numbers do not tie out is a board whose page and code disagree.
+ */
+export function boardAuditIssue(board: BoardRow[]): string | null {
+  for (const r of board) {
+    const recomputed = r.tvl_usd * r.category_multiple * r.growth_multiplier * r.runway_multiplier * r.breadth_multiplier * r.size_multiplier;
+    const tolerance = Math.max(2, recomputed * 0.01);
+    if (Math.abs(recomputed - r.implied_value_usd) > tolerance) {
+      return `${r.slug}: implied ${r.implied_value_usd} does not recompute from its printed factors (${Math.round(recomputed)})`;
+    }
   }
   return null;
 }

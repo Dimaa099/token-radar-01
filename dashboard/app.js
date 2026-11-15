@@ -55,7 +55,11 @@
   $('topmeta').textContent = 'Snapshot as of ' + DATA.as_of + ' · ' + DATA.source;
   $('footmeta').textContent =
     'Model ' + DATA.model_version + ' · global median multiple ' + DATA.global_multiple.toFixed(2) + '× TVL · ' +
-    'undated protocols priced at the median age of ' + DATA.median_age_days + ' days · watchlist floor ' + money(DATA.floor_usd) + '. ';
+    'undated protocols priced at the median age of ' + DATA.median_age_days + ' days · watchlist floor ' + money(DATA.floor_usd) +
+    (DATA.validation
+      ? ' · graded blind on ' + DATA.validation.protocols + ' tokenized protocols: median error ×/' +
+        Math.pow(10, DATA.validation.median_abs_log10_error).toFixed(2) + ', ' + DATA.validation.within_2x_pct + '% within 2×.'
+      : '') + ' ';
   var totalImplied = DATA.rows.reduce(function (sum, r) { return sum + r.implied_value_usd; }, 0);
   var stats = [
     { v: String(DATA.board_size), l: 'pre-token protocols ranked', hot: true },
@@ -129,7 +133,7 @@
           '<td class="num">' + money(r.tvl_usd) + '</td>' +
           '<td class="num">' + pct(r.change_7d) + '</td>' +
           '<td class="num">' + ageText(r.age_days) + '</td>' +
-          '<td class="num">' + r.category_multiple.toFixed(2) + '×</td>' +
+          '<td class="num">' + r.category_multiple.toFixed(2) + '×' + (r.peer_count < 3 ? ' <span class="thin">thin</span>' : '') + '</td>' +
           '<td class="num"><span class="value">' + money(r.implied_value_usd) + '</span><span class="bar"><i style="width:' + w + '%"></i></span></td>' +
           '<td class="plan"><b>' + money(r.plan_capital_usd) + '</b> in · ~' + money(r.plan_gas_usd) + ' gas · ' + r.plan_weeks + ' wk</td>' +
           '</tr>'
@@ -179,6 +183,20 @@
       rows + '</tbody></table>' +
       '<p class="fineprint">The global median across every tokenized protocol is ' + DATA.global_multiple.toFixed(2) +
       '×; a category with fewer than three peers, and any protocol whose category has no peers, prices at it.</p>';
+    var v = DATA.validation;
+    if (v) {
+      var factor = Math.pow(10, v.median_abs_log10_error);
+      $('validbox').innerHTML =
+        '<div class="stats" style="grid-template-columns:repeat(4,1fr)">' +
+        '<div class="stat hot"><b>' + v.protocols + '</b><span>tokenized protocols priced blind, each left out of its own comps</span></div>' +
+        '<div class="stat"><b>×/' + factor.toFixed(2) + '</b><span>median error: the typical blind price lands within this factor of the actual market cap</span></div>' +
+        '<div class="stat"><b>' + v.within_2x_pct + '%</b><span>of blind prices land within 2× of the actual market cap</span></div>' +
+        '<div class="stat"><b>' + v.spearman.toFixed(2) + '</b><span>rank correlation between the blind prices and the actual caps</span></div>' +
+        '</div>' +
+        '<p class="fineprint">Honest limits: a factor of ×/' + factor.toFixed(2) + ' at the median is a wide price, and the board knows it — ' +
+        'that is why every row prints its workings and its peer count, and why thin rows are marked. The radar ranks where a launch ' +
+        'would be worth most if the record held; it does not promise the record will hold.</p>';
+    }
   }
 
   // ------------------------------------------------------------ detail view
@@ -215,14 +233,20 @@
       '<tr><td>× growth — its 7-day TVL change, capped and halved</td><td class="num">× ' + row.growth_multiplier.toFixed(2) + '</td></tr>' +
       '<tr><td>× runway — ' + (row.age_days == null ? 'no tracking date: priced at the median age' : row.age_days + ' days with no token') + '</td><td class="num">× ' + row.runway_multiplier.toFixed(2) + '</td></tr>' +
       '<tr><td>× breadth — ' + row.chains.length + ' chain' + (row.chains.length === 1 ? '' : 's') + ' of distribution</td><td class="num">× ' + row.breadth_multiplier.toFixed(2) + '</td></tr>' +
+      '<tr><td>× size — at ' + money(row.tvl_usd) + ' of TVL against the peers\' median ' + money(DATA.ref_tvl) + ': the market pays a smaller multiple at this size</td><td class="num">× ' + row.size_multiplier.toFixed(2) + '</td></tr>' +
       '<tr class="total"><td>= implied launch value</td><td class="num">' + moneyFull(row.implied_value_usd) + '</td></tr>' +
       '</table>';
-    var comps = row.comps.length
+    var thinNote = price && price.peers < 3
+      ? '<p class="fineprint">Thin evidence: this category has ' + (price.peers === 0 ? 'no tokenized peer at all' : 'only ' + price.peers + ' tokenized peer' + (price.peers === 1 ? '' : 's')) +
+        ', so the board does not price from ' + (price.peers === 1 ? 'that single ratio' : 'them') + ' — it prices at the global median ' + DATA.global_multiple.toFixed(2) +
+        '× and marks the row thin. Treat the price as skip-grade: a prompt to look closer, not a number to size a farm by.</p>'
+      : '';
+    var comps = (row.comps.length
       ? '<table class="factors"><thead><tr><th>Tokenized peer</th><th class="num">Market cap</th><th class="num">TVL</th><th class="num">Mcap / TVL</th></tr></thead><tbody>' +
         row.comps.map(function (c) {
           return '<tr><td>' + esc(c.name) + '</td><td class="num">' + money(c.mcap_usd) + '</td><td class="num">' + money(c.tvl_usd) + '</td><td class="num">' + c.ratio.toFixed(2) + '×</td></tr>';
         }).join('') + '</tbody></table>'
-      : '<p class="fineprint">No tokenized protocol in this category is near it in size, so its price leans on the category median itself.</p>';
+      : '<p class="fineprint">No tokenized protocol in this category is near it in size, so its price leans on the category median itself.</p>') + thinNote;
     var steps = row.farm_steps
       .map(function (s) {
         var at = s.indexOf(' Cost: ');
@@ -241,6 +265,7 @@
       '<div class="planchips">' +
       '<span class="chip">Capital in position: <b>' + money(row.plan_capital_usd) + '</b></span>' +
       '<span class="chip">Gas, all-in estimate: <b>~' + money(row.plan_gas_usd) + '</b></span>' +
+      '<span class="chip">Net cost to farm: <b>~' + money(row.plan_gas_usd) + '</b> — the ' + money(row.plan_capital_usd) + ' capital stays in the position and comes back on unwind; gas and the weekly minutes are what the plan actually spends</span>' +
       '<span class="chip">Hold: <b>' + row.plan_weeks + ' weeks</b></span>' +
       '<span class="chip">Routine: <b>' + row.plan_weekly_minutes + ' min/week</b></span>' +
       '</div>' +

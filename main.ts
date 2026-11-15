@@ -16,7 +16,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { boardIssue, buildRadar, dataScript, parseSnapshot } from './lib/model.ts';
+import { boardAuditIssue, boardIssue, buildRadar, dataScript, parseSnapshot } from './lib/model.ts';
 import { buildDossier } from './vendor/makefun-board.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -47,6 +47,11 @@ const { board, radar } = buildRadar(snapshot);
 const issue = boardIssue(board, snapshot);
 if (issue !== null) {
   process.stderr.write(`launch radar: the model wrote a board the gate refuses: ${issue}\n`);
+  process.exit(1);
+}
+const auditIssue = boardAuditIssue(board);
+if (auditIssue !== null) {
+  process.stderr.write(`launch radar: the board does not tie out against its own printed factors: ${auditIssue}\n`);
   process.exit(1);
 }
 
@@ -85,7 +90,13 @@ for (const name of shots) {
 // The dossier is written last: the scorer rebuilds it from this /output and compares bytes.
 writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEXT_MAX_BYTES, screenshots: SCREENSHOT_CAPS, dashboard: { max_files: 400, max_bytes: 4_194_304 } }));
 
+const validationLine =
+  radar.validation === null
+    ? 'launch radar: too few tokenized protocols to grade the model against\n'
+    : `launch radar: model graded blind on ${radar.validation.protocols} tokenized protocols: median error x/${Math.pow(10, radar.validation.median_abs_log10_error).toFixed(2)}, ${radar.validation.within_2x_pct}% within 2x, rank correlation ${radar.validation.spearman.toFixed(2)}\n`;
+
 process.stdout.write(
   `launch radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows ranked (${radar.early_size} beyond the watchlist, ${radar.live_size} live set aside)\n` +
+    validationLine +
     `launch radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (${pageFiles.length} files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );

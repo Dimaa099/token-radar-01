@@ -16,8 +16,8 @@
     <h1>Which pre-token protocol is worth farming next?</h1>
     <p class="lede">Every protocol in the snapshot that records no token yet, ranked by what a launch
     would be worth if its record stayed as it is. The price is what the market already pays for the
-    tokenized protocols in the same line of work, applied to this one's TVL, growth, runway and
-    reach. Each row carries its farm plan: what to do, what it costs, how long it takes.</p>
+    tokenized protocols in the same line of work, applied to this one's TVL, growth, runway, reach
+    and size. Each row carries its farm plan: what to do, what it costs, how long it takes.</p>
     <div class="stats" id="stats"></div>
   </section>
 
@@ -102,7 +102,7 @@
     <h2>How every price on the board is made</h2>
     <p>One function prices every row. Nothing is priced by name, and no figure comes from outside the
     snapshot:</p>
-    <div class="formula">implied value = TVL &times; category multiple &times; growth &times; runway &times; breadth</div>
+    <div class="formula">implied value = TVL &times; category multiple &times; growth &times; runway &times; breadth &times; size</div>
     <ul class="model-list">
       <li><strong>Category multiple.</strong> For each DefiLlama category, take the tokenized protocols
       in it and their market-cap-to-TVL ratios; the multiple is the median ratio, shrunk toward the
@@ -117,6 +117,19 @@
       A protocol with no tracking date is priced at the snapshot's median age.</li>
       <li><strong>Breadth.</strong> +2.5% per chain past the first, up to eight: distribution is
       worth a premium, and it is the smallest factor on purpose.</li>
+      <li><strong>Size.</strong> The multiple is tilted by (this TVL / the tokenized peers' median
+      TVL) to the power -0.25. The comparables' own record demands it: across the snapshot's
+      tokenized protocols, the median market-cap-to-TVL ratio falls from 0.48 for the smallest
+      third to 0.05 for the largest — the market simply does not pay a giant the multiple it pays
+      a small protocol, so this board does not either. The slope was fitted, not guessed: tested
+      out of sample on the tokenized protocols (each priced blind, itself left out), a slope of
+      0.25 beat the untilted model on the held-out half of all 24 seeded splits, with the ranking
+      correlation intact; steeper slopes kept buying a little error with a lot of ranking.</li>
+      <li><strong>Thin evidence is marked, not hidden.</strong> A category with fewer than three
+      tokenized peers cannot carry its own median, so its rows price at the global median and the
+      board marks their multiple <em>thin</em>. The price is the board's honest fallback, printed
+      as one: read a thin row as a skip-grade price — a reason to look closer, not a number to
+      size a farm by.</li>
       <li><strong>Who gets ranked.</strong> Every watchlist protocol, plus every other protocol that
       records no token. Above the watchlist floor a candidate must also pass the watchlist's own
       product screen, so a wrapped, staked or bridged product of a token that already trades (the
@@ -125,6 +138,15 @@
       widest, because finding the early ones is the radar's job.</li>
     </ul>
     <div id="cattable"></div>
+    <h2 style="margin-top:22px">The model, graded blind on every run</h2>
+    <p>A pricing model for protocols whose answer is not known yet can still be marked — on the
+    protocols whose answer is. Every time this program runs, it takes each tokenized protocol in
+    the snapshot, hides its market cap, rebuilds its category's multiple without it, and prices it
+    with the same function that prices this board. Then it compares the blind price with the
+    market cap the protocol actually carries. No protocol ever prices itself, and the figures
+    below are recomputed from the sealed snapshot on the run that wrote this page — they are not
+    a claim pasted in from somewhere else.</p>
+    <div id="validbox"></div>
     <p class="fineprint">What the board does not do: predict that a token will be issued, or when. A
     protocol can run for years with no token and never issue one. The farm plans assume the reader
     wants the position anyway if the protocol's own rewards make it worthwhile, and every plan says
